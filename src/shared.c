@@ -56,7 +56,15 @@ static Shared parse_cli(int argc, char **argv) {
 
   s.sock_addr.sin_family = AF_INET;
   s.sock_addr.sin_addr.s_addr = inet_addr(s.hostname);
+
+  // https://stackoverflow.com/questions/2438471/raw-socket-sendto-failure-in-os-x
+  // - ip_len and ip_off must be in host byte order
+  // Amo muito quando a apple decide não ser compatível com a speficiação S2
+  #ifndef __APPLE__
   s.sock_addr.sin_port = htons(s.port);
+  #else
+  s.sock_addr.sin_port = s.port;
+  #endif
 
   s.md5 = malloc(sizeof(struct MD5Context));
   MD5Init(s.md5);
