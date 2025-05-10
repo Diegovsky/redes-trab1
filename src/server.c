@@ -9,9 +9,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-void tcp(Shared sh) {
+void tcp(int files, Shared sh) {
   listen(sh.sockfd, 1);
-  while (1) {
+  while (files --> 0) {
     int bytes_read;
     int client = accept(sh.sockfd, NULL, NULL);
     while ((bytes_read = fread(sh.buffer, 1, BUFSIZE, sh.file)) != 0) {
@@ -28,15 +28,15 @@ void tcp(Shared sh) {
     close(client);
     char *f = sh_finish_hash(sh);
     fseek(sh.file, 0, SEEK_SET);
-    printf("MD5: %s\n", f);
+    print("MD5: %s", f);
   }
 }
 
-void udp(Shared sh) {
+void udp(int files, Shared sh) {
   UDPPacket *pack = (UDPPacket *)sh.buffer;
-  while (1) {
+  while (files --> 0) {
     size_t bytes_read = 0;
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;
     socklen_t client_size = sizeof(client_addr);
     bzero(&client_addr, client_size);
 
@@ -82,9 +82,15 @@ void app(Shared sh) {
     die("Failed to bind to address %s:%hd: %s", sh.hostname, sh.port,
         strerror(errno));
   }
+  int files = 1;
+  char* var = getenv("FILE_COUNT");
+  if(var) {
+    files = atoi(var);
+  }
+  print("Files: %d", files);
   if (sh.is_udp) {
-    udp(sh);
+    udp(files, sh);
   } else {
-    tcp(sh);
+    tcp(files, sh);
   }
 }
