@@ -27,7 +27,7 @@ void print_download(double speed) {
     }
     speed /= 1024;
   }
-  print("Download Speed = %.2lf%sb/s", speed, postfix);
+  print("Download Speed: %.2lf%sb/s", speed, postfix);
 }
 
 size_t udp(Shared sh) {

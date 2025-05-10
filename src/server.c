@@ -20,7 +20,7 @@ void tcp(Shared sh) {
         print("Client disconnected");
         break;
       } else if (h == -1) {
-        die("fuck");
+        die("Send Error: %s", strerror(errno));
       }
       sh_update_hash(sh, sh.buffer, bytes_read);
     }
@@ -45,7 +45,7 @@ void udp(Shared sh) {
     while (1) {
       if (recvfrom(sh.sockfd, NULL, 0, 0, (void *)&client_addr, &client_size) ==
           -1) {
-        print("RError: %s", strerror(errno));
+        print("Recv Error: %s", strerror(errno));
         break;
       }
 
@@ -62,7 +62,7 @@ void udp(Shared sh) {
       result = sendto(sh.sockfd, pack, UDPPacketSize(bytes_read), 0,
                       (void *)&client_addr, client_size);
       if (result == -1) {
-        print("Error: %s", strerror(errno));
+        print("Send Error: %s", strerror(errno));
         break;
       }
       packet++;
