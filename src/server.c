@@ -12,7 +12,7 @@
 void tcp(int files, Shared sh) {
   listen(sh.sockfd, 1);
   while (files --> 0) {
-    int bytes_read;
+    int bytes_read = 0;
     int client = accept(sh.sockfd, NULL, NULL);
     while ((bytes_read = fread(sh.buffer, 1, BUFSIZE, sh.file)) != 0) {
       ssize_t h = send(client, sh.buffer, bytes_read, 0);
@@ -26,6 +26,7 @@ void tcp(int files, Shared sh) {
     }
     fseek(sh.file, 0, SEEK_SET);
     close(client);
+
     char *f = sh_finish_hash(sh);
     fseek(sh.file, 0, SEEK_SET);
     print("MD5: %s", f);
@@ -35,20 +36,20 @@ void tcp(int files, Shared sh) {
 void udp(int files, Shared sh) {
   UDPPacket *pack = (UDPPacket *)sh.buffer;
   while (files --> 0) {
-    size_t bytes_read = 0;
     struct sockaddr_storage client_addr;
     socklen_t client_size = sizeof(client_addr);
     bzero(&client_addr, client_size);
 
+    // wait for client
+    if (recvfrom(sh.sockfd, NULL, 0, 0, (void *)&client_addr, &client_size) ==
+        -1) {
+      print("Recv Error: %s", strerror(errno));
+      break;
+    }
+
     uint16_t packet = 0;
-
+    size_t bytes_read = 0;
     while (1) {
-      if (recvfrom(sh.sockfd, NULL, 0, 0, (void *)&client_addr, &client_size) ==
-          -1) {
-        print("Recv Error: %s", strerror(errno));
-        break;
-      }
-
       bytes_read = fread(pack->body, 1, BUFSIZE, sh.file);
       if (bytes_read == 0) {
         break;
@@ -82,12 +83,7 @@ void app(Shared sh) {
     die("Failed to bind to address %s:%hd: %s", sh.hostname, sh.port,
         strerror(errno));
   }
-  int files = 1;
-  char* var = getenv("FILE_COUNT");
-  if(var) {
-    files = atoi(var);
-  }
-  print("Files: %d", files);
+  int files = 10;
   if (sh.is_udp) {
     udp(files, sh);
   } else {

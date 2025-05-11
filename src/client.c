@@ -31,22 +31,23 @@ void print_download(double speed) {
 }
 
 size_t udp(Shared sh) {
+  UDPPacket *pack = (UDPPacket *)sh.buffer;
+  pack->packet_id = 0;
+
+  send(sh.sockfd, NULL, 0, 0);
+
   ssize_t bytes_read = 0, total_bytes_read = 0;
   uint16_t expected_packet = 0, packets_lost = 0;
-  UDPPacket *pack = (UDPPacket *)sh.buffer;
-  pack->packet_id = expected_packet;
-
   while (1) {
-    send(sh.sockfd, NULL, 0, 0);
     bytes_read = recv(sh.sockfd, pack, UDPPacketSize(BUFSIZE), 0);
-    if (bytes_read == -1) {
-      die("Error: %s", strerror(errno));
-    }
-    bytes_read -= UDPPacketSize(0);
     if (pack->packet_id == (uint16_t)-1) {
       break;
     }
+    if (bytes_read == -1) {
+      die("Error: %s", strerror(errno));
+    }
     total_bytes_read += bytes_read;
+    bytes_read -= UDPPacketSize(0);
 
     if (pack->packet_id != expected_packet) {
       packets_lost++;
@@ -101,6 +102,7 @@ void app(Shared sh) {
   clock_gettime(CLOCK_MONOTONIC, &before);
 
   size_t total_bytes_read = sh.is_udp ? udp(sh) : tcp(sh);
+  print("Total bytes: %ld", total_bytes_read);
 
   double total_time = time_elapsed(&before);
   print_download(total_bytes_read / total_time);
