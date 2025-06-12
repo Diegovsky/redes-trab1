@@ -1,22 +1,13 @@
 
-client *args:
-    @just compile 2>&1
-    build/client {{args}}
+compile *args:
+    ninja --quiet -C build {{args}}
 
-server *args:
-    @just compile 2>&1
-    build/server {{args}}
+simple *args: compile
+    build/simple 127.0.0.1 {{args}}
 
-dbg-client *args:
-    @just compile 2>&1
-    gdb -args build/client {{args}}
-
-dbg-server *args:
-    @just compile 2>&1
-    gdb -args build/server {{args}}
+thread *args: compile
+    build/thread 127.0.0.1 {{args}}
 
 gendb:
     just compile -t compdb > compile_commands.json
 
-compile *args:
-    @ninja --quiet -C build {{args}}

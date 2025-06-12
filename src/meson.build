@@ -1,12 +1,12 @@
-files = files(
+shared = files(
   'shared.c',
   'shared.h',
 )
 
-client = files(
-  'client.c'
-) + files
+simple = files(
+  'simple.c'
+)
 
-server = files(
-  'server.c'
-) + files
+thread = files(
+  'thread.c'
+)
