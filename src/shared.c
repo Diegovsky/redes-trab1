@@ -95,6 +95,10 @@ void handle_request(HandlerArgs *args) {
     sendstr(args->clientfd, "HTTP/1.1 401 Bad Request\r\n");
     goto end;
   }
+  if(streq(path, "_quit")) {
+    should_quit = true;
+    goto end;
+  }
 
   for (int i = 1; i < lines_len; i++) {
     line = lines[i];
@@ -152,13 +156,13 @@ error:
   goto end;
 }
 
-HandlerArgs ha_new(Shared *sh, int clientfd, _Atomic bool *available) {
+HandlerArgs ha_new(const Shared *sh, int clientfd) {
   return (HandlerArgs){.sh = sh,
                        .clientfd = clientfd,
                        .buffer = calloc(BUFSIZE, 1),
                        .error = false,
                        .err_no = 0,
-                       .filled = available};
+                       };
 }
 
 bool should_quit = false;

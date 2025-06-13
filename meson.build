@@ -13,4 +13,7 @@ threads_dep = dependency('threads')
 
 executable('simple', simple, dependencies: shared_dep)
 executable('thread', thread, dependencies: [shared_dep, threads_dep])
+executable('thread_queue', thread_queue, dependencies: [shared_dep, threads_dep])
+executable('select', select, dependencies: shared_dep)
+
 

@@ -51,10 +51,9 @@ typedef struct {
   // out
   bool error;
   int err_no;
-  _Atomic bool *filled;
 } HandlerArgs;
 
 void app(Shared sh);
 
-HandlerArgs ha_new(Shared *sh, int clientfd, _Atomic bool *finished);
+HandlerArgs ha_new(const Shared *sh, int clientfd);
 void handle_request(HandlerArgs *args);

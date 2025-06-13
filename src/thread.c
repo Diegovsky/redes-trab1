@@ -10,44 +10,46 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <semaphore.h>
 
 const int NUM_THREADS = 16;
 
-static int handle_request_trampoline(HandlerArgs *args) {
-  handle_request(args);
-  atomic_store(args->filled, false);
-  free(args->buffer);
+typedef struct {
+  HandlerArgs args;
+  sem_t* semaphore;
+}TrampArgs; 
+
+static void handle_request_trampoline(TrampArgs *args) {
+  handle_request(&args->args);
+  sem_post(args->semaphore);
+  free(args->args.buffer);
   free(args);
-  return 0;
+  pthread_exit(NULL);
 }
 
 void app(Shared sh) {
   listen(sh.sockfd, NUM_THREADS);
-  _Atomic bool slots[NUM_THREADS];
-  memset(slots, 0, sizeof(slots));
-
+  
+  sem_t semaphore;
+  sem_init(&semaphore, false, NUM_THREADS);
+  
   while (!should_quit) {
     log("Awaiting clients...");
     int clientfd = accept(sh.sockfd, NULL, NULL);
     if (clientfd == -1) {
       die("Failed to accept client: %s", strerror(errno));
     }
-    int free_slot = -1;
-    for (int i = 0; i < NUM_THREADS; i++) {
-      if (!atomic_load(&slots[i])) {
-        free_slot = i;
-        atomic_store(&slots[i], true);
-        break;
-      }
-    }
-    if(free_slot == -1) {
-      log("No threads available.");
-      continue;
-    }
-    HandlerArgs* args = malloc(sizeof(HandlerArgs));
-    *args = ha_new(&sh, clientfd, &slots[free_slot]);
+    sem_wait(&semaphore);
+    TrampArgs* args = malloc(sizeof(TrampArgs));
+    args->args = ha_new(&sh, clientfd);
+    args->semaphore = &semaphore;
 
-    pthread_t th;
-    pthread_create(&th, NULL, (void*)handle_request_trampoline, args);
+    pthread_t t;
+    pthread_create(&t, NULL, (void*)handle_request_trampoline, args);
+    pthread_detach(t);
   }
+  for(int i = 0; i < NUM_THREADS; i++) {
+    sem_wait(&semaphore);
+  }
+  sem_destroy(&semaphore);
 }
