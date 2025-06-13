@@ -42,7 +42,7 @@ static void destroy(Shared sh) {
 }
 
 static sds mime_type(const char *filename) {
-  sds cmd = sdscatprintf(sdsempty(), "file --mime-type %s", filename);
+  sds cmd = sdscatprintf(sdsempty(), "file -ib %s", filename);
   FILE *stream = popen(cmd, "r");
   sdsfree(cmd);
   if (stream == NULL)
@@ -50,19 +50,66 @@ static sds mime_type(const char *filename) {
 
   char *buf = sdsgrowzero(sdsempty(), 64);
   fgets(buf, 64, stream);
+  buf[strcspn(buf, "\n")] = '\0';
+  sdsupdatelen(buf);
+  log("mime: '%s'\n", buf);
   pclose(stream);
   return buf;
 }
 
-static int sendstr(int fd, char *msg) { return send(fd, msg, strlen(msg), 0); }
+static void sendall(int fd, char* msg, int len) {
+  while(len > 0) {
+    int sent = send(fd, msg, len, 0);
+    msg += sent;
+    len -= sent;
+  }
+}
+static void sendstr(int fd, char *msg) { sendall(fd, msg, strlen(msg)); }
 
-static ssize_t get_file_size(FILE *file) {
+typedef struct {
+  ssize_t size;
+  bool is_dir;
+} FileInfo;
+
+static bool get_file_size(FILE *file, FileInfo* out) {
   int fd = fileno(file);
 
   struct stat stat;
-  if (fstat(fd, &stat) != 0)
-    return -1;
-  return stat.st_size;
+  if (fstat(fd, &stat) != 0) return false;
+  out->is_dir = S_ISDIR(stat.st_mode);
+  out->size = stat.st_size;
+  return true;
+}
+
+#include <dirent.h>  // For directory traversal
+
+static void send_index(int clientfd, sds path) {
+  log("die");
+  sds msg = sdsempty();
+  msg = sdscatprintf(msg, "<html><head><title>Listagem de %s</title></head><body style=\"display: flexbox\"><h1>Listagem de %s</h1>", path, path);
+
+  DIR* dir = opendir(path);
+  if (dir) {
+      struct dirent* entry;
+      while ((entry = readdir(dir)) != NULL) {
+          if (streq(entry->d_name, ".") || streq(entry->d_name, "..")) continue;
+          log("%s\n", entry->d_name);
+          msg = sdscatprintf(msg, "<a href=\"%s\">%s</a><br>\n", entry->d_name, entry->d_name);
+      }
+      closedir(dir);
+  } else {
+      msg = sdscat(msg, "<p>Erro ao listar diretório.</p>");
+  }
+
+  msg = sdscat(msg, "</body></html>");
+
+  sendall(clientfd, msg, sdslen(msg));
+  sdsfree(msg);
+}
+
+
+static void send_404(int clientfd) {
+    sendstr(clientfd, "HTTP/1.1 404 Not Found\r\n");
 }
 
 /*
@@ -72,7 +119,7 @@ User-Agent: curl/8.14.1
 */
 void handle_request(HandlerArgs *args) {
   char *buf = (char *)args->buffer;
-  char *path = NULL;
+  sds path = NULL, mime = NULL;
   sds *lines = NULL;
   FILE *file = NULL;
   ssize_t bytes_read = recv(args->clientfd, buf, BUFSIZE - 1, 0);
@@ -90,6 +137,10 @@ void handle_request(HandlerArgs *args) {
   char *line = lines[0];
 
   sscanf(line, "%s /%[^ ]s", method, path);
+  path = sdstrim(path, " ");
+  if(sdslen(path) == 0) {
+    path = sdscat(path, "./");
+  }
   log("%s: %s", method, path);
   if (!streq(method, "GET")) {
     sendstr(args->clientfd, "HTTP/1.1 401 Bad Request\r\n");
@@ -111,26 +162,37 @@ void handle_request(HandlerArgs *args) {
       sep++;
     log("%s: %s", line, sep);
   }
-
   file = fopen(path, "rb");
   if (file == NULL) {
-    sendstr(args->clientfd, "HTTP/1.1 404 Not Found\r\n");
+    send_404(args->clientfd);
     goto end;
   }
 
-  ssize_t file_size = get_file_size(file);
-  sds mime = mime_type(path);
+  FileInfo info;
+  if(!get_file_size(file, &info)) {
+    send_404(args->clientfd);
+    goto end;
+  }
+
+  mime = mime_type(path);
+  if(info.is_dir) {
+    sdsclear(mime);
+    mime = sdscat(mime, "text/html; charset=utf-8");
+  }
 
   sds msg = sdsnew("HTTP/1.1 200 OK\r\n");
   msg = sdscatprintf(msg, "Content-Type: %s\r\n", mime);
   msg = sdscat(msg, "Server: trab2-server\r\n");
-  if (file_size != -1)
-    msg = sdscatprintf(msg, "Content-Length: %s\r\n", mime);
+  if(!info.is_dir) msg = sdscatprintf(msg, "Content-Length: %ld\r\n", info.size);
   msg = sdscat(msg, "\r\n\r\n");
   sendstr(args->clientfd, msg);
-
-  sdsfree(mime);
   sdsfree(msg);
+
+  if(info.is_dir) {
+    send_index(args->clientfd, path);
+    goto end;
+  }
+
   for (;;) {
     ssize_t read = fread(buf, 1, BUFSIZE, file);
     if (read == 0)
@@ -142,9 +204,12 @@ void handle_request(HandlerArgs *args) {
 
     send(args->clientfd, buf, read, 0);
   }
+  
+
 
 end:
   if (path != NULL) sdsfree(path);
+  if (mime != NULL) sdsfree(mime);
   if (lines != NULL) sdsfreesplitres(lines, lines_len);
   if(file != NULL) fclose(file);
   close(args->clientfd);
