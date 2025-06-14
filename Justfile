@@ -20,3 +20,4 @@ select *args: compile
 gendb:
     just compile -t compdb > compile_commands.json
 
+# h

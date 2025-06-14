@@ -1,6 +1,7 @@
 #include "shared.h"
 #include "sds.h"
 
+#include <dirent.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <getopt.h>
@@ -13,6 +14,8 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <unistd.h>
+
+#define ENDL "\r\n"
 
 static Shared parse_cli(int argc, char **argv) {
   Shared s;
@@ -71,7 +74,7 @@ typedef struct {
   bool is_dir;
 } FileInfo;
 
-static bool get_file_size(FILE *file, FileInfo* out) {
+static bool get_file_info(FILE *file, FileInfo* out) {
   int fd = fileno(file);
 
   struct stat stat;
@@ -81,19 +84,21 @@ static bool get_file_size(FILE *file, FileInfo* out) {
   return true;
 }
 
-#include <dirent.h>  // For directory traversal
-
 static void send_index(int clientfd, sds path) {
   log("die");
   sds msg = sdsempty();
   msg = sdscatprintf(msg, "<html><head><title>Listagem de %s</title></head><body style=\"display: flexbox\"><h1>Listagem de %s</h1>", path, path);
 
+  sds buf = sdsempty();
   DIR* dir = opendir(path);
   if (dir) {
       struct dirent* entry;
       while ((entry = readdir(dir)) != NULL) {
           if (streq(entry->d_name, ".") || streq(entry->d_name, "..")) continue;
-          log("%s\n", entry->d_name);
+          if(sdslen(path) != 0)  {
+            buf = sdscatprintf(buf, "%s/", path);
+          }
+          buf = sdscat(buf, entry->d_name);
           msg = sdscatprintf(msg, "<a href=\"%s\">%s</a><br>\n", entry->d_name, entry->d_name);
       }
       closedir(dir);
@@ -101,22 +106,37 @@ static void send_index(int clientfd, sds path) {
       msg = sdscat(msg, "<p>Erro ao listar diretório.</p>");
   }
 
+  sdsfree(buf);
   msg = sdscat(msg, "</body></html>");
 
   sendall(clientfd, msg, sdslen(msg));
   sdsfree(msg);
 }
 
-
-static void send_404(int clientfd) {
-    sendstr(clientfd, "HTTP/1.1 404 Not Found\r\n");
+static void send_error(int clientfd, int error) {
+  sds msg = sdsnew("HTTP/1.1 ");
+  switch(error) {
+    case 404:
+      msg = sdscat(msg, "404 Not Found");
+      break;
+    case 401:
+      msg = sdscat(msg, "401 Bad Request");
+      break;
+    default:
+      die("Unsupported error code %d", error);
+  }
+  msg = sdscat(msg, ENDL);
+  msg = sdscat(msg, "Server: trab2-server" ENDL);
+  msg = sdscat(msg, "Content-Type: text/plain"ENDL);
+  msg = sdscat(msg, "Server: trab2-server"ENDL);
+  const char* text = "Erro";
+  msg = sdscatprintf(msg, "Content-Length: %ld"ENDL, strlen(text));
+  msg = sdscat(msg, ENDL);
+  msg = sdscat(msg, text);
+  sendall(clientfd, msg, sdslen(msg));
+  sdsfree(msg);
 }
 
-/*
-GET / HTTP/1.1
-Host: localhost:8080
-User-Agent: curl/8.14.1
-*/
 void handle_request(HandlerArgs *args) {
   char *buf = (char *)args->buffer;
   sds path = NULL, mime = NULL;
@@ -130,7 +150,7 @@ void handle_request(HandlerArgs *args) {
   buf[bytes_read] = '\0';
 
   int lines_len = 0;
-  lines = sdssplitlen(buf, bytes_read, "\r\n", 2, &lines_len);
+  lines = sdssplitlen(buf, bytes_read, ENDL, 2, &lines_len);
 
   char method[16] = {0};
   path = sdsgrowzero(sdsempty(), 256);
@@ -143,7 +163,7 @@ void handle_request(HandlerArgs *args) {
   }
   log("%s: %s", method, path);
   if (!streq(method, "GET")) {
-    sendstr(args->clientfd, "HTTP/1.1 401 Bad Request\r\n");
+    send_error(args->clientfd, 404);
     goto end;
   }
   if(streq(path, "_quit")) {
@@ -164,13 +184,13 @@ void handle_request(HandlerArgs *args) {
   }
   file = fopen(path, "rb");
   if (file == NULL) {
-    send_404(args->clientfd);
+    send_error(args->clientfd, 404);
     goto end;
   }
 
   FileInfo info;
-  if(!get_file_size(file, &info)) {
-    send_404(args->clientfd);
+  if(!get_file_info(file, &info)) {
+    send_error(args->clientfd, 404);
     goto end;
   }
 
@@ -180,11 +200,11 @@ void handle_request(HandlerArgs *args) {
     mime = sdscat(mime, "text/html; charset=utf-8");
   }
 
-  sds msg = sdsnew("HTTP/1.1 200 OK\r\n");
-  msg = sdscatprintf(msg, "Content-Type: %s\r\n", mime);
-  msg = sdscat(msg, "Server: trab2-server\r\n");
-  if(!info.is_dir) msg = sdscatprintf(msg, "Content-Length: %ld\r\n", info.size);
-  msg = sdscat(msg, "\r\n\r\n");
+  sds msg = sdsnew("HTTP/1.1 200 OK"ENDL);
+  msg = sdscatprintf(msg, "Content-Type: %s"ENDL, mime);
+  msg = sdscat(msg, "Server: trab2-server"ENDL);
+  if(!info.is_dir) msg = sdscatprintf(msg, "Content-Length: %ld"ENDL, info.size);
+  msg = sdscat(msg, ""ENDL);
   sendstr(args->clientfd, msg);
   sdsfree(msg);
 
@@ -195,6 +215,7 @@ void handle_request(HandlerArgs *args) {
 
   for (;;) {
     ssize_t read = fread(buf, 1, BUFSIZE, file);
+    fwrite(buf, read, 1, stdout);
     if (read == 0)
       break;
     else if (read == -1) {
@@ -202,7 +223,7 @@ void handle_request(HandlerArgs *args) {
       goto error;
     }
 
-    send(args->clientfd, buf, read, 0);
+    sendall(args->clientfd, buf, read);
   }
   
 
