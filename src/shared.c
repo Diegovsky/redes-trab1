@@ -85,7 +85,6 @@ static bool get_file_info(FILE *file, FileInfo* out) {
 }
 
 static void send_index(int clientfd, sds path) {
-  log("die");
   sds msg = sdsempty();
   msg = sdscatprintf(msg, "<html><head><title>Listagem de %s</title></head><body style=\"display: flexbox\"><h1>Listagem de %s</h1>", path, path);
 
@@ -95,11 +94,12 @@ static void send_index(int clientfd, sds path) {
       struct dirent* entry;
       while ((entry = readdir(dir)) != NULL) {
           if (streq(entry->d_name, ".") || streq(entry->d_name, "..")) continue;
+          sdsclear(buf);
           if(sdslen(path) != 0)  {
             buf = sdscatprintf(buf, "%s/", path);
           }
           buf = sdscat(buf, entry->d_name);
-          msg = sdscatprintf(msg, "<a href=\"%s\">%s</a><br>\n", entry->d_name, entry->d_name);
+          msg = sdscatprintf(msg, "<a href=\"%s\">%s</a><br>\n", buf, entry->d_name);
       }
       closedir(dir);
   } else {
