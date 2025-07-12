@@ -9,40 +9,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-void tcp(int files, Shared sh) {
-  listen(sh.sockfd, 1);
-  while (files --> 0) {
-    int bytes_read = 0;
-    int client = accept(sh.sockfd, NULL, NULL);
-    while ((bytes_read = fread(sh.buffer, 1, BUFSIZE, sh.file)) != 0) {
-      ssize_t h = send(client, sh.buffer, bytes_read, 0);
-      if (h == 0) {
-        print("Client disconnected");
-        break;
-      } else if (h == -1) {
-        die("Send Error: %s", strerror(errno));
-      }
-      sh_update_hash(sh, sh.buffer, bytes_read);
-    }
-    fseek(sh.file, 0, SEEK_SET);
-    close(client);
-
-    char *f = sh_finish_hash(sh);
-    fseek(sh.file, 0, SEEK_SET);
-    print("MD5: %s", f);
-  }
-}
-
-void udp(int files, Shared sh) {
-  UDPPacket *pack = (UDPPacket *)sh.buffer;
-  while (files --> 0) {
-    struct sockaddr_storage client_addr;
-    socklen_t client_size = sizeof(client_addr);
-    bzero(&client_addr, client_size);
+void udp(Shared sh) {
+  UDPPacket *pack = (UDPPacket *)sh.packet;
+  while (1) {
+    UDP udp = udp_new(sh.sockfd);
 
     // wait for client
-    if (recvfrom(sh.sockfd, NULL, 0, 0, (void *)&client_addr, &client_size) ==
-        -1) {
+    log("Waiting for client to connect");
+    if (udp_recv(&udp, pack)) {
       print("Recv Error: %s", strerror(errno));
       break;
     }
@@ -50,18 +24,21 @@ void udp(int files, Shared sh) {
     uint16_t packet = 0;
     size_t bytes_read = 0;
     while (1) {
-      bytes_read = fread(pack->body, 1, BUFSIZE, sh.file);
+      log("Reading file");
+      bytes_read = fread(pack->body, 1, sizeof(UDPPacket), stdin);
+      log("Read");
       if (bytes_read == 0) {
         break;
       }
 
+      pack->size = UDPPacketSize(bytes_read);
       sh_update_hash(sh, pack->body, bytes_read);
 
       pack->packet_id = packet;
       ssize_t result;
 
-      result = sendto(sh.sockfd, pack, UDPPacketSize(bytes_read), 0,
-                      (void *)&client_addr, client_size);
+      log("Sending file");
+      result = udp_send(&udp, pack);
       if (result == -1) {
         print("Send Error: %s", strerror(errno));
         break;
@@ -69,24 +46,21 @@ void udp(int files, Shared sh) {
       packet++;
     }
     pack->packet_id = -1;
-    sendto(sh.sockfd, pack, UDPPacketSize(0), 0, (void *)&client_addr,
-           client_size);
+    pack->size = UDPPacketSize(0);
+    udp_send(&udp, pack);
 
     char *f = sh_finish_hash(sh);
-    fseek(sh.file, 0, SEEK_SET);
+    fseek(stdin, 0, SEEK_SET);
     printf("MD5: %s\n", f);
   }
 }
 
 void app(Shared sh) {
   if (bind(sh.sockfd, (struct sockaddr *)&sh.sock_addr, sizeof(sh.sock_addr))) {
-    die("Failed to bind to address %s:%hd: %s", sh.hostname, sh.port,
+    char adr[24];
+    inet_ntop(AF_INET, (void*)&sh.sock_addr, adr, sizeof(adr)-1);
+    die("Failed to bind to address %s:%hd: %s", adr, htons(sh.sock_addr.sin_port),
         strerror(errno));
   }
-  int files = 10;
-  if (sh.is_udp) {
-    udp(files, sh);
-  } else {
-    tcp(files, sh);
-  }
+  udp(sh);
 }

@@ -2,8 +2,10 @@
 #include "libs/md5.h"
 
 #include <arpa/inet.h>
+#include <assert.h>
 #include <errno.h>
 #include <getopt.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -17,63 +19,30 @@
 static Shared parse_cli(int argc, char **argv) {
   Shared s;
   memset(&s, 0, sizeof(s));
-  if (argc != ARGC ||
-      (argc >= 2 && (streq(argv[1], "--help") || streq(argv[1], "-h")))) {
-#ifdef CLIENT
-    die("USAGE: %s [IP] [PORT] <tcp|udp>", argv[0]);
-#else
-    die("USAGE: %s [IP] [PORT] <tcp|udp> [FILENAME]", argv[0]);
-#endif
-  }
-  s.hostname = argv[1];
-  s.port = (short)atoi(argv[2]);
-  s.protocol_name = argv[3];
+  // if (argc != ARGC ||
+  //     (argc >= 2 && (streq(argv[1], "--help") || streq(argv[1], "-h")))) {
+  // }
 
-#ifndef CLIENT
-  s.filename = argv[4];
-#endif
-
-  int protocol;
-  if (streq(s.protocol_name, "udp")) {
-    protocol = SOCK_DGRAM;
-    s.is_udp = true;
-  } else if (streq(s.protocol_name, "tcp")) {
-    protocol = SOCK_STREAM;
-    s.is_udp = false;
-  } else {
-    die("Expected either `tcp` or `udp`. Got: `%s`", s.protocol_name);
-  }
-#ifndef CLIENT
-  s.file = fopen(s.filename, "rb");
-  if (s.file == NULL) {
-    die("Failed to open file %s: %s", s.filename, strerror(errno));
-  }
-#endif
-
-  s.sockfd = socket(AF_INET, protocol, 0);
+  s.sockfd = socket(AF_INET, SOCK_DGRAM, 0);
   int optval = 1;
   setsockopt(s.sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
   s.sock_addr.sin_family = AF_INET;
-  s.sock_addr.sin_addr.s_addr = inet_addr(s.hostname);
+  s.sock_addr.sin_addr.s_addr = inet_addr(HOST_IP);
 
   // https://stackoverflow.com/questions/2438471/raw-socket-sendto-failure-in-os-x
   // - ip_len and ip_off must be in host byte order
   // Amo muito quando a apple decide não ser compatível com a speficiação S2
   #ifndef __APPLE__
-  s.sock_addr.sin_port = htons(s.port);
+  s.sock_addr.sin_port = htons(PORT);
   #else
-  s.sock_addr.sin_port = s.port;
+  s.sock_addr.sin_port = PORT;
   #endif
 
   s.md5 = malloc(sizeof(struct MD5Context));
   MD5Init(s.md5);
 
-  size_t bufsize = BUFSIZE;
-  if (s.is_udp) {
-    bufsize += sizeof(UDPPacket);
-  }
-  s.buffer = malloc(bufsize);
+  s.packet = malloc(sizeof(UDPPacket));
   return s;
 }
 
@@ -89,25 +58,42 @@ char u8tohex(uint8_t u) {
   }
 }
 
-char *sh_finish_hash(Shared sh) {
-  uint8_t out[16];
-  MD5Final(out, sh.md5);
-  MD5Init(sh.md5);
+char* hash_to_human(uint8_t hash[16]) {
   static char human[33] = {[32] = 0};
   for (int i = 0; i < 16; i++) {
-    human[i * 2] = u8tohex(out[i] & 0xF);
-    human[i * 2 + 1] = u8tohex(0xF & (out[i] >> 4));
+    human[i * 2] = u8tohex(hash[i] & 0xF);
+    human[i * 2 + 1] = u8tohex(0xF & (hash[i] >> 4));
   }
   return human;
+  
+}
+
+char *sh_finish_hash(Shared sh, uint8_t out[16]) {
+  MD5Final(out, sh.md5);
+  MD5Init(sh.md5);
 }
 
 static void destroy(Shared sh) {
-#ifndef CLIENT
-  fclose(sh.file);
-#endif
   close(sh.sockfd);
   free(sh.md5);
-  free(sh.buffer);
+  free(sh.packet);
+}
+
+bool udp_send(UDP* udp, UDPPacket* packet) {
+  sendto(udp->sockfd, packet, packet->size, 0, (void*)&udp->addr, sizeof(udp->addr_len));
+}
+ssize_t udp_recv(UDP* udp, UDPPacket* packet) {
+  size_t byres_read = recvfrom(udp->sockfd, packet, packet->size, 0, (void*)&udp->addr, &udp->addr_len);
+  assert(byres_read == packet->size);
+}
+
+
+UDP udp_new(int sockfd) {
+  UDP udp;
+  bzero(&udp, sizeof(udp));
+  udp.sockfd = sockfd;
+  udp.addr_len = sizeof(udp.addr);
+  return udp;
 }
 
 int main(int argc, char **argv) {
@@ -115,3 +101,4 @@ int main(int argc, char **argv) {
   app(sh);
   destroy(sh);
 }
+

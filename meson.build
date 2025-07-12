@@ -6,5 +6,5 @@ subdir('libs')
 subdir('src')
 
 executable('server', server, link_with: [md5_dep])
-executable('client', client, link_with: [md5_dep], c_args: ['-DCLIENT'])
+executable('client', client, link_with: [md5_dep])
 

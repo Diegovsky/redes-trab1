@@ -31,31 +31,38 @@ void print_download(double speed) {
 }
 
 size_t udp(Shared sh) {
-  UDPPacket *pack = (UDPPacket *)sh.buffer;
-  pack->packet_id = 0;
+  UDPPacket *pack = sh.packet;
 
-  send(sh.sockfd, NULL, 0, 0);
+  UDP udp = udp_new(sh.sockfd);
+  udp.addr_len = sizeof(sh.sock_addr);
+  memcpy(&udp.addr, &sh.sock_addr, udp.addr_len);
+
+  log("Telling server I'm connected");
+  pack->packet_id = 0;
+  pack->size = UDPPacketSize(0);
+  udp_send(&udp, pack);
 
   ssize_t bytes_read = 0, total_bytes_read = 0;
   uint16_t expected_packet = 0, packets_lost = 0;
   while (1) {
-    bytes_read = recv(sh.sockfd, pack, UDPPacketSize(BUFSIZE), 0);
-    if (pack->packet_id == (uint16_t)-1) {
+    log("Reading chunk from server");
+    bytes_read = udp_recv(&udp, pack);
+    log("Read from the server");
+
+    if (bytes_read == -1) {
+      die("Error reading from server: %s", strerror(errno));
+    }
+
+    if (pack->type == PACKET_CLOSE) {
+      log("Server closed the connection");
       break;
     }
-    if (bytes_read == -1) {
-      die("Error: %s", strerror(errno));
-    }
-    total_bytes_read += bytes_read;
-    bytes_read -= UDPPacketSize(0);
 
-    if (pack->packet_id != expected_packet) {
-      packets_lost++;
-      expected_packet = pack->packet_id;
-    }
-    if (packets_lost == 0) {
-      sh_update_hash(sh, pack->body, bytes_read);
-    }
+    total_bytes_read += bytes_read;
+    bytes_read -= UDP_HEADER_SIZE;
+
+    fwrite(pack->body, bytes_read, 1, stdlog);
+    sh_update_hash(sh, pack->body, bytes_read);
     expected_packet++;
   }
 
@@ -71,27 +78,6 @@ size_t udp(Shared sh) {
   return (size_t)total_bytes_read;
 }
 
-size_t tcp(Shared sh) {
-  ssize_t bytes_read, total_bytes_read = 0;
-
-  while (1) {
-    bytes_read = recv(sh.sockfd, sh.buffer, BUFSIZE, 0);
-    if (bytes_read == 0)
-      break;
-    if (bytes_read == -1) {
-      print("Server error");
-      break;
-    }
-    total_bytes_read += bytes_read;
-
-    sh_update_hash(sh, sh.buffer, bytes_read);
-  }
-  char *f = sh_finish_hash(sh);
-  print("MD5: %s", f);
-
-  return total_bytes_read;
-}
-
 void app(Shared sh) {
   if (connect(sh.sockfd, (struct sockaddr *)&sh.sock_addr,
               sizeof(sh.sock_addr))) {
@@ -101,7 +87,7 @@ void app(Shared sh) {
   struct timespec before;
   clock_gettime(CLOCK_MONOTONIC, &before);
 
-  size_t total_bytes_read = sh.is_udp ? udp(sh) : tcp(sh);
+  size_t total_bytes_read = udp(sh);
   print("Total bytes: %ld", total_bytes_read);
 
   double total_time = time_elapsed(&before);
