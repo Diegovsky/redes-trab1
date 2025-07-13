@@ -14,9 +14,9 @@
     exit(1);                                                                   \
   }
 #define stdlog stderr
-#define print(fmt, ...) printf(fmt "\n", ##__VA_ARGS__);
-#define eprint(fmt, ...) fprintf(stdlog, fmt "\n", ##__VA_ARGS__);
-#define log(fmt, ...) eprint("[+] "fmt, ##__VA_ARGS__)
+#define fprint(file, fmt, ...) fprintf(file, fmt "\n", ##__VA_ARGS__);
+#define print(fmt, ...) fprint(stdout, fmt, ##__VA_ARGS__);
+#define log(fmt, ...) if(verbose) fprint(stdlog, "[+] "fmt, ##__VA_ARGS__)
 #define dbg(arg)                                                               \
   {                                                                            \
     printf(#arg " = ");                                                        \
@@ -35,11 +35,16 @@
 #define UDP_HEADER_SIZE (sizeof(UDPPacket) - BUFSIZE)
 #define UDPPacketSize(num) (UDP_HEADER_SIZE + num)
 
+typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
 
 static const char HOST_IP[] = "127.0.0.1";
 static const u16 PORT = 1025;
+
+extern float fail_percent;
+extern bool verbose;
+
 
 typedef enum {
   PACKET_DATA = 0,
@@ -67,28 +72,33 @@ typedef struct {
 typedef struct {
   socklen_t addr_len;
   struct sockaddr_in addr;
+  UDPPacket* ack_packet;
   UDPPacket* packet;
   u16 packet_id;
   int sockfd;
+  // stats
+  u32 total_bytes_sent;
+  u32 total_bytes_received;
+  u32 packets_lost;
+  u32 packets_duplicated;
+  u32 packets_resent;
 } UDP;
 
+char* bytes_to_human(u32 byte_count);
 char* inet_to_human(struct sockaddr_in* addr);
 bool udp_connect(UDP* udp);
 RecvResult udp_listen(UDP* udp);
 void udp_close(UDP* udp);
 bool udp_send(UDP* udp, u16 size);
 RecvResult udp_recv(UDP* udp);
+void udp_print_stats(UDP* udp);
 
 typedef struct {
-  bool verbose;
   float error_percent;
-
-  struct MD5Context *md5;
 
   int sockfd;
   struct sockaddr_in sock_addr;
 
-  UDPPacket* packet;
   UDP udp;
 } Shared;
 

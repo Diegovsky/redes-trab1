@@ -17,46 +17,20 @@ double time_elapsed(struct timespec *before) {
   return time;
 }
 
-void print_download(double speed) {
-  char *units[] = {"", "K", "M", "G", "T"};
-  char *postfix;
-  for (int i = 0; i < (int)(sizeof(units) / sizeof(units[0])); i++) {
-    postfix = units[i];
-    if (speed < 1024) {
-      break;
-    }
-    speed /= 1024;
-  }
-  print("Download Speed: %.2lf%sb/s", speed, postfix);
-}
 
-void udp(Shared sh) {
-  UDPPacket *pack = sh.packet;
-  UDP* udp = &sh.udp;
+static void send_file(Shared* sh) {
+  UDPPacket *pack = sh->udp.packet;
+  UDP* udp = &sh->udp;
   log("Telling server I'm connected");
   udp_connect(udp);
 
   while (1) {
-    log("Reading chunk from server");
-    RecvResult res = udp_recv(udp);
-    switch(res) {
-      case RECV_ERR:
-        die("Failed to read from the server");
-      case RECV_TIMEOUT:
-        log("Timed out waiting for response");
-        continue;
-      case RECV_CLOSE:
-        log("Server closed the connection");
-        goto exit;
-      case RECV_OK:
-        break;
-    }
-    log("Read from the server:");
-    fwrite(pack->body, pack->size, 1, stdlog);
+    u16 bytes_read = fread(pack->body, 1, BUFSIZE, stdin);
+    if(bytes_read == 0 && feof(stdin)) break;
+    udp_send(udp, UDPPacketSize(bytes_read));
   }
 
-  exit:
-  return;
+  udp_close(udp);
 }
 
 void app(Shared sh) {
@@ -68,9 +42,10 @@ void app(Shared sh) {
   struct timespec before;
   clock_gettime(CLOCK_MONOTONIC, &before);
 
-  udp(sh);
-  // print("Total bytes: %ld", total_bytes_read);
+  send_file(&sh);
+  udp_print_stats(&sh.udp);
 
-  // double total_time = time_elapsed(&before);
-  // print_download(total_bytes_read / total_time);
+  double total_time = time_elapsed(&before);
+  print("Tempo total: %lfs", total_time);
+  print("Velocidade de Upload: %sb/s", bytes_to_human(sh.udp.total_bytes_sent / total_time));
 }

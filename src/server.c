@@ -11,9 +11,9 @@
 
 const int SLEEP = 2;
 
-void udp(Shared sh) {
-  UDPPacket *pack = (UDPPacket *)sh.packet;
-  UDP udp_original = sh.udp;
+static void receive_files(Shared* sh) {
+  UDPPacket *pack = sh->udp.packet;
+  UDP udp_original = sh->udp;
   while (1) {
     UDP udp_copy = udp_original;
     UDP* udp = &udp_copy;
@@ -35,31 +35,34 @@ void udp(Shared sh) {
         break;
     }
 
-    size_t bytes_read = 0;
     while (1) {
-      log("Reading file");
-      bytes_read = fread(pack->body, 1, BUFSIZE, stdin);
-      log("Read %ld bytes", bytes_read);
-      if (bytes_read == 0) {
-        break;
+      log("Waiting for client's chunk");
+      RecvResult res = udp_recv(udp);
+      switch(res) {
+        case RECV_ERR:
+          log("Failed to read from client. Giving up");
+          goto exit;
+        case RECV_TIMEOUT:
+          log("Timed out waiting for response");
+          continue;
+        case RECV_CLOSE:
+          log("Server closed the connection");
+          goto exit;
+        case RECV_OK:
+          break;
       }
-
-      log("Sending file");
-      if(!udp_send(udp, UDPPacketSize(bytes_read))) {
-        log("Send Error: %s", strerror(errno));
-        break;
-      }
+      log("Got %hd bytes from client", pack->size);
     }
-
+    exit:
     udp_close(udp);
+    udp_print_stats(udp);
   }
 }
 
 void app(Shared sh) {
   if (bind(sh.sockfd, (struct sockaddr *)&sh.sock_addr, sizeof(sh.sock_addr)) == -1) {
-    
-    die("Failed to bind to address %s:%hd: %s", inet_to_human(&sh.sock_addr), htons(sh.sock_addr.sin_port),
-        strerror(errno));
+    die("Failed to bind to address %s: %s", inet_to_human(&sh.sock_addr), strerror(errno));
   }
-  udp(sh);
+  receive_files(&sh);
+  udp_print_stats(&sh.udp);
 }
