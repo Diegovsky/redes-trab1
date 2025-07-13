@@ -1,5 +1,7 @@
 #include "shared.h"
 
+#include <time.h>
+#include <stdlib.h>
 #include <arpa/inet.h>
 #include <asm-generic/errno-base.h>
 #include <asm-generic/errno.h>
@@ -102,9 +104,21 @@ static bool checksum_match(UDPPacket* packet) {
   
 }
 
+static bool synthetic_fail() {
+  const double RESOLUTION = 10000;
+  if(fail_percent == 0.0) return false;
+  double r = ((rand() % (int) (RESOLUTION+1)) / RESOLUTION);
+  dbg(r);
+  return r <= fail_percent;
+}
+
 static bool send2(UDP* udp, const UDPPacket* pack) {
   assert(pack->size >= UDP_HEADER_SIZE);
   udp->total_bytes_sent += pack->size;
+  if(synthetic_fail()) {
+    log("Synthetically failing to send packet %hd", pack->packet_id);
+    return true;
+  }
   log("Sending packet %hd of type %d", pack->packet_id, pack->type);
   return sendto(udp->sockfd, pack, pack->size, 0, (void*)&udp->addr, udp->addr_len) != -1;
 }
@@ -139,7 +153,7 @@ static RecvResult raw_recv(UDP* udp, u16 expected_id, u16 expected_type) {
   retry:
   if(retries >= 10) return RECV_ERR;
   if(!recv2(udp, packet)) {
-    if(errno == EAGAIN) return RECV_TIMEOUT;
+    if(errno == EAGAIN || errno == EWOULDBLOCK) return RECV_TIMEOUT;
     else return RECV_ERR;
   }
 
@@ -181,10 +195,12 @@ static RecvResult raw_recv(UDP* udp, u16 expected_id, u16 expected_type) {
 }
 
 static bool raw_send(UDP* udp, PacketType type, u16 id, u16 size) {
-  #define retry(stat) { log("Retrying..."); udp->stat++; goto retry; }
+  #define retry(stat) { log("Retrying..."); retries++; udp->stat++; goto retry; }
+  int retries = 0;
   UDPPacket* packet = udp->packet;
   log("----raw_send----");
   retry:
+  if(retries >= 10) return false;
   packet_prepare(packet, type, id, size);
   // send packet
   if(!send2(udp, packet)) return false;
@@ -281,11 +297,12 @@ void udp_print_stats(UDP* udp) {
   print("Quantidade de dados enviados: %s", bytes_to_human(udp->total_bytes_sent));
   print("Quantidade de dados recebidos: %s", bytes_to_human(udp->total_bytes_received));
   print("Quantidade de pacotes comutados: %hd", udp->packet_id);
-  print("Taxa de sucesso: %.2lf", (1.0 - udp->packets_lost/(double)udp->packet_id)*100.0);
+  print("Taxa de sucesso: %.2lf%%", (1.0 - udp->packets_lost/(double)udp->packet_id)*100.0);
 }
 
 int main(int argc, char **argv) {
   Shared sh = parse_cli(argc, argv);
+  srand(time(NULL));
   app(sh);
   destroy(sh);
 }

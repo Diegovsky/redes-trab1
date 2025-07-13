@@ -21,7 +21,7 @@ static void receive_files(Shared* sh) {
     log("Waiting for client to connect");
     switch(udp_listen(udp)) {
       case RECV_ERR:
-        die("Recv Error: %s", strerror(errno));
+        log("Recv Error: %s", strerror(errno));
         break;
       case RECV_CLOSE:
         log("Client closed the connection");
@@ -38,22 +38,25 @@ static void receive_files(Shared* sh) {
     while (1) {
       log("Waiting for client's chunk");
       RecvResult res = udp_recv(udp);
-      switch(res) {
-        case RECV_ERR:
-          log("Failed to read from client. Giving up");
-          goto exit;
-        case RECV_TIMEOUT:
-          log("Timed out waiting for response");
-          continue;
-        case RECV_CLOSE:
-          log("Server closed the connection");
-          goto exit;
-        case RECV_OK:
-          break;
+      if(res != RECV_OK) {
+        switch(res) {
+          case RECV_ERR:
+            log("Failed to read from client. Giving up");
+            break;
+          case RECV_TIMEOUT:
+            log("Timed out waiting for response");
+            break;
+          case RECV_CLOSE:
+            log("Server closed the connection");
+          default:
+            break;
+        }
+        log("Server gave up on client");
+        log("-----------");
+        break;
       }
       log("Got %hd bytes from client", pack->size);
     }
-    exit:
     udp_close(udp);
     udp_print_stats(udp);
   }

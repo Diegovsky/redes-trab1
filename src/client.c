@@ -27,7 +27,10 @@ static void send_file(Shared* sh) {
   while (1) {
     u16 bytes_read = fread(pack->body, 1, BUFSIZE, stdin);
     if(bytes_read == 0 && feof(stdin)) break;
-    udp_send(udp, UDPPacketSize(bytes_read));
+    if(!udp_send(udp, UDPPacketSize(bytes_read))) {
+      log("Error trying to talk to server: %s", strerror(errno));
+      break;
+    }
   }
 
   udp_close(udp);
