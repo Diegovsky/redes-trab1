@@ -9,57 +9,56 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+const int SLEEP = 2;
+
 void udp(Shared sh) {
   UDPPacket *pack = (UDPPacket *)sh.packet;
+  UDP udp_original = sh.udp;
   while (1) {
-    UDP udp = udp_new(sh.sockfd);
-
+    UDP udp_copy = udp_original;
+    UDP* udp = &udp_copy;
     // wait for client
     log("Waiting for client to connect");
-    if (udp_recv(&udp, pack)) {
-      print("Recv Error: %s", strerror(errno));
-      break;
+    switch(udp_listen(udp)) {
+      case RECV_ERR:
+        die("Recv Error: %s", strerror(errno));
+        break;
+      case RECV_CLOSE:
+        log("Client closed the connection");
+        continue;
+      case RECV_TIMEOUT:
+        log("No client, sleeping for %d second(s)", SLEEP);
+        sleep(SLEEP);
+        continue;
+      case RECV_OK:
+        log("Client connected!");
+        break;
     }
 
-    uint16_t packet = 0;
     size_t bytes_read = 0;
     while (1) {
       log("Reading file");
-      bytes_read = fread(pack->body, 1, sizeof(UDPPacket), stdin);
-      log("Read");
+      bytes_read = fread(pack->body, 1, BUFSIZE, stdin);
+      log("Read %ld bytes", bytes_read);
       if (bytes_read == 0) {
         break;
       }
 
-      pack->size = UDPPacketSize(bytes_read);
-      sh_update_hash(sh, pack->body, bytes_read);
-
-      pack->packet_id = packet;
-      ssize_t result;
-
       log("Sending file");
-      result = udp_send(&udp, pack);
-      if (result == -1) {
-        print("Send Error: %s", strerror(errno));
+      if(!udp_send(udp, UDPPacketSize(bytes_read))) {
+        log("Send Error: %s", strerror(errno));
         break;
       }
-      packet++;
     }
-    pack->packet_id = -1;
-    pack->size = UDPPacketSize(0);
-    udp_send(&udp, pack);
 
-    char *f = sh_finish_hash(sh);
-    fseek(stdin, 0, SEEK_SET);
-    printf("MD5: %s\n", f);
+    udp_close(udp);
   }
 }
 
 void app(Shared sh) {
-  if (bind(sh.sockfd, (struct sockaddr *)&sh.sock_addr, sizeof(sh.sock_addr))) {
-    char adr[24];
-    inet_ntop(AF_INET, (void*)&sh.sock_addr, adr, sizeof(adr)-1);
-    die("Failed to bind to address %s:%hd: %s", adr, htons(sh.sock_addr.sin_port),
+  if (bind(sh.sockfd, (struct sockaddr *)&sh.sock_addr, sizeof(sh.sock_addr)) == -1) {
+    
+    die("Failed to bind to address %s:%hd: %s", inet_to_human(&sh.sock_addr), htons(sh.sock_addr.sin_port),
         strerror(errno));
   }
   udp(sh);

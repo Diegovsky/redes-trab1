@@ -1,5 +1,4 @@
 #pragma once
-#include "libs/md5.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -26,6 +25,7 @@
                size_t: "%ld",                                                  \
                ssize_t: "%ld",                                                 \
                double: "%lf",                                                  \
+               PacketType: "%d", \
                uint16_t: "%hd"),                                               \
            arg);                                                               \
     printf("\n");                                                              \
@@ -35,8 +35,11 @@
 #define UDP_HEADER_SIZE (sizeof(UDPPacket) - BUFSIZE)
 #define UDPPacketSize(num) (UDP_HEADER_SIZE + num)
 
+typedef uint16_t u16;
+typedef uint8_t u8;
+
 static const char HOST_IP[] = "127.0.0.1";
-static const uint16_t PORT = 1025;
+static const u16 PORT = 1025;
 
 typedef enum {
   PACKET_DATA = 0,
@@ -46,16 +49,35 @@ typedef enum {
   PACKET_INIT,
 } PacketType;
 
+typedef enum {
+  RECV_OK = 0,
+  RECV_CLOSE,
+  RECV_TIMEOUT,
+  RECV_ERR,
+} RecvResult;
+
 typedef struct {
-  uint16_t size;
-  uint16_t packet_id;
-  uint8_t hash[16];
+  u16 size;
+  u16 packet_id;
+  u16 checksum;
   PacketType type;
-  union {
-    uint16_t retry_id;
-    uint8_t body[BUFSIZE];
-  };
+  u8 body[BUFSIZE];
 } UDPPacket;
+
+typedef struct {
+  socklen_t addr_len;
+  struct sockaddr_in addr;
+  UDPPacket* packet;
+  u16 packet_id;
+  int sockfd;
+} UDP;
+
+char* inet_to_human(struct sockaddr_in* addr);
+bool udp_connect(UDP* udp);
+RecvResult udp_listen(UDP* udp);
+void udp_close(UDP* udp);
+bool udp_send(UDP* udp, u16 size);
+RecvResult udp_recv(UDP* udp);
 
 typedef struct {
   bool verbose;
@@ -67,22 +89,8 @@ typedef struct {
   struct sockaddr_in sock_addr;
 
   UDPPacket* packet;
+  UDP udp;
 } Shared;
-
-typedef struct {
-  socklen_t addr_len;
-  struct sockaddr_storage addr;
-  int sockfd;
-} UDP;
-
-char* hash_to_human(uint8_t hash[16]);
-
-void sh_update_hash(Shared sh, uint8_t *bytes, size_t length);
-char *sh_finish_hash(Shared sh, uint8_t out[16]);
-
-UDP udp_new(int sockfd);
-bool udp_send(UDP* udp, UDPPacket* packet);
-ssize_t udp_recv(UDP* udp, UDPPacket* packet);
 
 
 void app(Shared sh);

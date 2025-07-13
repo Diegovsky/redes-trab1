@@ -30,52 +30,33 @@ void print_download(double speed) {
   print("Download Speed: %.2lf%sb/s", speed, postfix);
 }
 
-size_t udp(Shared sh) {
+void udp(Shared sh) {
   UDPPacket *pack = sh.packet;
-
-  UDP udp = udp_new(sh.sockfd);
-  udp.addr_len = sizeof(sh.sock_addr);
-  memcpy(&udp.addr, &sh.sock_addr, udp.addr_len);
-
+  UDP* udp = &sh.udp;
   log("Telling server I'm connected");
-  pack->packet_id = 0;
-  pack->size = UDPPacketSize(0);
-  udp_send(&udp, pack);
+  udp_connect(udp);
 
-  ssize_t bytes_read = 0, total_bytes_read = 0;
-  uint16_t expected_packet = 0, packets_lost = 0;
   while (1) {
     log("Reading chunk from server");
-    bytes_read = udp_recv(&udp, pack);
-    log("Read from the server");
-
-    if (bytes_read == -1) {
-      die("Error reading from server: %s", strerror(errno));
+    RecvResult res = udp_recv(udp);
+    switch(res) {
+      case RECV_ERR:
+        die("Failed to read from the server");
+      case RECV_TIMEOUT:
+        log("Timed out waiting for response");
+        continue;
+      case RECV_CLOSE:
+        log("Server closed the connection");
+        goto exit;
+      case RECV_OK:
+        break;
     }
-
-    if (pack->type == PACKET_CLOSE) {
-      log("Server closed the connection");
-      break;
-    }
-
-    total_bytes_read += bytes_read;
-    bytes_read -= UDP_HEADER_SIZE;
-
-    fwrite(pack->body, bytes_read, 1, stdlog);
-    sh_update_hash(sh, pack->body, bytes_read);
-    expected_packet++;
+    log("Read from the server:");
+    fwrite(pack->body, pack->size, 1, stdlog);
   }
 
-  print("Packets Lost: %d", packets_lost);
-
-  if (packets_lost == 0) {
-    char *f = sh_finish_hash(sh);
-    print("MD5: %s", f);
-  } else {
-    print("MD5: null");
-  }
-
-  return (size_t)total_bytes_read;
+  exit:
+  return;
 }
 
 void app(Shared sh) {
@@ -87,9 +68,9 @@ void app(Shared sh) {
   struct timespec before;
   clock_gettime(CLOCK_MONOTONIC, &before);
 
-  size_t total_bytes_read = udp(sh);
-  print("Total bytes: %ld", total_bytes_read);
+  udp(sh);
+  // print("Total bytes: %ld", total_bytes_read);
 
-  double total_time = time_elapsed(&before);
-  print_download(total_bytes_read / total_time);
+  // double total_time = time_elapsed(&before);
+  // print_download(total_bytes_read / total_time);
 }
